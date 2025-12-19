@@ -3,3 +3,7 @@ dist/
 *.log
 .DS_Store
 .env
+
+# Claude Code local files
+.claude/
+CLAUDE.md

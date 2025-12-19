@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [1.0.0] - 2025-12-20
+
+### Changed
+- Bumped to 1.0.0 for npm publication
+- Updated @modelcontextprotocol/sdk to ^1.25.1 (security fix)
+- Expanded package keywords for npm discoverability
+- Added repository, homepage, and bugs URLs to package.json
+- Added CONTRIBUTING.md
+
 ## [0.1.0] - 2025-11-29
 
 ### Added

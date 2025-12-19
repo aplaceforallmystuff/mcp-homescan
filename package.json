@@ -1,6 +1,6 @@
 {
   "name": "mcp-homescan",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "MCP server for home network discovery and vulnerability scanning",
   "type": "module",
   "main": "dist/index.js",
@@ -16,16 +16,31 @@
   "keywords": [
     "mcp",
     "model-context-protocol",
+    "mcp-server",
+    "claude",
+    "claude-code",
+    "claude-desktop",
+    "ai",
     "network",
     "security",
-    "vulnerability",
+    "network-scanner",
     "home-network",
-    "iot"
+    "iot",
+    "arp",
+    "device-discovery"
   ],
   "author": "Jim Christian",
+  "homepage": "https://github.com/aplaceforallmystuff/mcp-homescan#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aplaceforallmystuff/mcp-homescan.git"
+  },
+  "bugs": {
+    "url": "https://github.com/aplaceforallmystuff/mcp-homescan/issues"
+  },
   "license": "MIT",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0"
+    "@modelcontextprotocol/sdk": "^1.25.1"
   },
   "devDependencies": {
     "@types/node": "^20.10.0",

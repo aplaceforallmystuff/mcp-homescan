@@ -26,13 +26,10 @@ function generateFrontmatter(device: NetworkDevice, category: string): string {
     `manufacturer: ${device.manufacturer || "Unknown"}`,
   ];
 
-  // Flag unknown/suspicious devices for security review
-  if (
-    device.manufacturer?.includes("Xiaomi") ||
-    device.manufacturer?.includes("China") ||
-    device.manufacturer === "Unknown"
-  ) {
+  const assessment = assessDevice(device);
+  if (assessment.flagged) {
     lines.push("security_review: true");
+    lines.push(`risk_level: ${assessment.risk}`);
   }
 
   lines.push(`notes: "Auto-discovered by mcp-homescan"`);
@@ -41,10 +38,18 @@ function generateFrontmatter(device: NetworkDevice, category: string): string {
   return lines.join("\n");
 }
 
+export type RiskLevel = "info" | "low" | "medium";
+
+export interface DeviceAssessment {
+  flagged: boolean;
+  risk: RiskLevel;
+  reasons: string[];
+}
+
 /**
  * Determine device category from manufacturer
  */
-function categorizeDevice(device: NetworkDevice): string {
+export function categorizeDevice(device: NetworkDevice): string {
   const mfr = device.manufacturer?.toLowerCase() || "";
 
   if (mfr.includes("apple")) return "Computing";
@@ -61,6 +66,52 @@ function categorizeDevice(device: NetworkDevice): string {
   if (mfr.includes("vm") || mfr.includes("virtual")) return "Virtual";
 
   return "Unknown";
+}
+
+/**
+ * Assess a device for review-worthiness based on observable properties,
+ * not vendor nationality.
+ *
+ * Signals:
+ *   - Unknown manufacturer: MAC OUI did not resolve; operator can't confirm purpose.
+ *   - Smart Home / IoT class: devices in this class (any vendor) commonly phone
+ *     home to cloud services, have weaker update cadence, and appear in
+ *     botnet exploitation datasets (Mirai etc.). Review applies equally to
+ *     Amazon, Google, Xiaomi, Samsung, TP-Link smart, etc.
+ *   - Private/randomized MAC: informational — identity obscured by design
+ *     (e.g. iOS/macOS privacy). Not a risk in itself.
+ */
+export function assessDevice(device: NetworkDevice): DeviceAssessment {
+  const reasons: string[] = [];
+  let risk: RiskLevel = "info";
+  let flagged = false;
+
+  const category = categorizeDevice(device);
+
+  if (device.manufacturer === "Unknown") {
+    reasons.push(
+      "Unknown manufacturer — MAC OUI unresolved; confirm device identity"
+    );
+    risk = "medium";
+    flagged = true;
+  }
+
+  if (category === "Smart Home") {
+    reasons.push(
+      "IoT/Smart Home class — review cloud connectivity, update cadence, and network isolation"
+    );
+    if (risk === "info") risk = "low";
+    flagged = true;
+  }
+
+  if (device.manufacturer === "Private/Randomized MAC") {
+    reasons.push(
+      "Locally-administered MAC — identity obscured by design (informational, not a risk)"
+    );
+    // informational only; do not flag unless already flagged for another reason
+  }
+
+  return { flagged, risk, reasons };
 }
 
 /**
@@ -106,18 +157,20 @@ function generateMarkdown(device: NetworkDevice): string {
 Auto-discovered by mcp-homescan on ${new Date().toISOString().split("T")[0]}.
 `;
 
-  // Add security warning for flagged devices
-  if (
-    device.manufacturer?.includes("Xiaomi") ||
-    device.manufacturer?.includes("China")
-  ) {
+  const assessment = assessDevice(device);
+  if (assessment.flagged) {
     content += `
-## Security
+## Security Review
 
-This device may communicate with servers outside your control. Consider:
-- Monitoring DNS queries via Pi-hole
-- Isolating on a separate VLAN
-- Blocking unnecessary outbound connections
+Flagged for review (risk: **${assessment.risk}**):
+
+${assessment.reasons.map((r) => `- ${r}`).join("\n")}
+
+General hardening steps for any reviewed device:
+- Monitor DNS queries via Pi-hole or equivalent
+- Isolate IoT devices on a separate VLAN
+- Block unnecessary outbound connections at the firewall
+- Keep firmware current; subscribe to vendor CVE feeds
 `;
   }
 
@@ -173,31 +226,23 @@ export function generateDiscoveryReport(devices: NetworkDevice[]): string {
     report += `| ${device.ip} | ${device.mac} | ${device.manufacturer || "Unknown"} | ${category} |\n`;
   }
 
-  // Flag devices needing attention
-  const flagged = devices.filter(
-    (d) =>
-      d.manufacturer?.includes("Xiaomi") ||
-      d.manufacturer?.includes("China") ||
-      d.manufacturer === "Unknown" ||
-      d.manufacturer === "Private/Randomized MAC"
-  );
+  // Flag devices needing attention (behavior/category-based)
+  const assessed = devices
+    .map((d) => ({ device: d, assessment: assessDevice(d) }))
+    .filter((x) => x.assessment.flagged);
 
-  if (flagged.length > 0) {
+  if (assessed.length > 0) {
     report += `
 ## Devices Requiring Review
 
-The following devices have been flagged for security review:
+Flagging is based on observable properties (unknown vendor, IoT device class),
+not vendor nationality.
 
-| IP | MAC | Reason |
-|----|-----|--------|
+| IP | MAC | Manufacturer | Risk | Reason |
+|----|-----|--------------|------|--------|
 `;
-    for (const device of flagged) {
-      let reason = "Unknown manufacturer";
-      if (device.manufacturer?.includes("Xiaomi")) reason = "Xiaomi device - may phone home";
-      if (device.manufacturer?.includes("China")) reason = "Chinese manufacturer - verify purpose";
-      if (device.manufacturer === "Private/Randomized MAC") reason = "Randomized MAC - could be anything";
-
-      report += `| ${device.ip} | ${device.mac} | ${reason} |\n`;
+    for (const { device, assessment } of assessed) {
+      report += `| ${device.ip} | ${device.mac} | ${device.manufacturer || "Unknown"} | ${assessment.risk} | ${assessment.reasons.join("; ")} |\n`;
     }
   }
 

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Security
+- Validate `HOMESCAN_SUBNET` at startup and reject shell metacharacters; previously a crafted env value could inject commands into the `ping` sweep.
+- Switch `ping` invocation from `exec` (shell) to `execFile` (argv) as defense in depth.
+- Validate `ip` argument on `homescan_device` tool as IPv4 at the tool boundary.
+- Added `SECURITY.md` with vulnerability disclosure policy.
+
+### Changed
+- **Breaking (behaviour):** Security flagging is now category/behaviour-based, not vendor-nationality-based. IoT/Smart Home devices are flagged regardless of vendor (Amazon, Google, Xiaomi, Samsung, TP-Link smart, etc. all receive equal review). Removed the "Chinese manufacturer" risk category.
+- Risk levels simplified to `info` / `low` / `medium`; private/randomized MACs are now informational rather than flagged.
+- Server version now read from `package.json` instead of hardcoded.
+- MAC addresses parsed from `arp -a` are now zero-padded; previously macOS's stripped-zero output (`0:50:56:…`) silently missed OUI lookups.
+
+### Added
+- Exported `isValidSubnet`, `isValidIPv4`, `normaliseMac` helpers from `discovery.ts`.
+- Exported `assessDevice`, `categorizeDevice`, `DeviceAssessment` from `inventory.ts`.
+- Unit test suite (`node:test`, no new deps): 21 tests covering validators, MAC normalisation, ARP parsing, and behaviour-based assessment. Run with `npm test`.
+- `ROADMAP.md` for planned medium/bigger work.
+
+### Removed
+- Unused `SHODAN_API_KEY` env var reference (was declared but never consumed).
+
 ## [1.0.0] - 2025-12-20
 
 ### Changed

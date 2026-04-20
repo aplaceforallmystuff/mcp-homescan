@@ -3,10 +3,54 @@
  * Handles ARP scanning, MAC lookups, and device fingerprinting
  */
 
-import { exec } from "child_process";
+import { exec, execFile } from "child_process";
 import { promisify } from "util";
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
+
+const SUBNET_RE = /^(?:\d{1,3}\.){2}\d{1,3}$/;
+const IPV4_RE = /^(?:\d{1,3}\.){3}\d{1,3}$/;
+
+function octetsValid(parts: string[]): boolean {
+  return parts.every((p) => {
+    const n = Number(p);
+    return Number.isInteger(n) && n >= 0 && n <= 255;
+  });
+}
+
+/**
+ * Validate a /24 subnet prefix like "192.168.1".
+ * Rejects shell metacharacters by construction.
+ */
+export function isValidSubnet(subnet: string): boolean {
+  if (!SUBNET_RE.test(subnet)) return false;
+  return octetsValid(subnet.split("."));
+}
+
+/**
+ * Validate a full IPv4 address like "192.168.1.42".
+ */
+export function isValidIPv4(ip: string): boolean {
+  if (!IPV4_RE.test(ip)) return false;
+  return octetsValid(ip.split("."));
+}
+
+/**
+ * Normalise a MAC address to canonical lower-case, colon-separated,
+ * zero-padded form: "0:50:56:ab:cd:ef" -> "00:50:56:ab:cd:ef".
+ *
+ * macOS/Linux `arp -a` strips leading zeros from each octet, which would
+ * otherwise cause OUI prefix lookups to silently miss.
+ *
+ * Returns the input unchanged if it doesn't look like a MAC.
+ */
+export function normaliseMac(mac: string): string {
+  const parts = mac.toLowerCase().split(":");
+  if (parts.length !== 6) return mac.toLowerCase();
+  if (!parts.every((p) => /^[0-9a-f]{1,2}$/.test(p))) return mac.toLowerCase();
+  return parts.map((p) => p.padStart(2, "0")).join(":");
+}
 
 export interface NetworkDevice {
   ip: string;
@@ -44,7 +88,7 @@ export function parseArpOutput(output: string): ArpEntry[] {
       if (mac && mac !== "(incomplete)" && !ip.startsWith("224.") && !ip.startsWith("239.")) {
         entries.push({
           ip,
-          mac: mac.toLowerCase(),
+          mac: normaliseMac(mac),
           interface: iface,
           complete: true,
         });
@@ -207,12 +251,18 @@ export async function getDeviceDetails(ip: string): Promise<NetworkDevice | null
  * Ping sweep to populate ARP cache (finds devices not in cache)
  */
 export async function pingSweep(subnet: string = "192.168.1"): Promise<void> {
+  if (!isValidSubnet(subnet)) {
+    throw new Error(
+      `Invalid subnet: ${JSON.stringify(subnet)}. Expected format: "A.B.C" (e.g. "192.168.1")`
+    );
+  }
+
   const promises: Promise<void>[] = [];
 
   for (let i = 1; i <= 254; i++) {
     const ip = `${subnet}.${i}`;
     promises.push(
-      execAsync(`ping -c 1 -W 100 ${ip}`, { timeout: 1000 })
+      execFileAsync("ping", ["-c", "1", "-W", "100", ip], { timeout: 1000 })
         .then(() => {})
         .catch(() => {})
     );

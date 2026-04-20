@@ -102,7 +102,6 @@ Add to `~/.claude.json`:
 | Variable | Description | Default |
 |----------|-------------|---------|
 | `HOMESCAN_SUBNET` | Network subnet to scan (e.g., `192.168.1`) | `192.168.1` |
-| `SHODAN_API_KEY` | Optional Shodan API key for vulnerability lookups | - |
 
 ## Usage Examples
 
@@ -175,16 +174,13 @@ Check your network configuration and update `HOMESCAN_SUBNET` to match your loca
 ## Security Notes
 
 - This tool only scans your local network
-- No data is sent externally (unless Shodan API is configured)
-- Flagged devices are recommendations only - verify before taking action
+- No data is sent externally
+- Flagged devices are recommendations only — verify before taking action
+- See [SECURITY.md](SECURITY.md) for vulnerability disclosure
 
 ## Roadmap
 
-- [ ] Shodan integration for CVE lookups
-- [ ] Pi-hole DNS query correlation
-- [ ] Port scanning (nmap-lite)
-- [ ] Baseline storage and alerting
-- [ ] Router DHCP lease integration
+See [ROADMAP.md](ROADMAP.md) for planned work and scope estimates.
 
 ## Contributing
 

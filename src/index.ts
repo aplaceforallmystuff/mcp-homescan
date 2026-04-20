@@ -7,8 +7,11 @@
  *
  * Environment variables:
  * - HOMESCAN_SUBNET: Network subnet to scan (default: 192.168.1)
- * - SHODAN_API_KEY: Optional Shodan API key for vulnerability lookups
  */
+
+import { readFileSync } from "fs";
+import { fileURLToPath } from "url";
+import { dirname, join } from "path";
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -18,23 +21,39 @@ import {
   Tool,
 } from "@modelcontextprotocol/sdk/types.js";
 
+const PKG = JSON.parse(
+  readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), "..", "package.json"),
+    "utf8"
+  )
+) as { version: string };
+
 import {
   discoverDevices,
   getDeviceDetails,
   pingSweep,
   lookupMacVendor,
   isPrivateMac,
+  isValidSubnet,
+  isValidIPv4,
+  normaliseMac,
   NetworkDevice,
 } from "./discovery.js";
 
 import {
   exportToObsidian,
   generateDiscoveryReport,
+  assessDevice,
 } from "./inventory.js";
 
 // Configuration
 const SUBNET = process.env.HOMESCAN_SUBNET || "192.168.1";
-const SHODAN_API_KEY = process.env.SHODAN_API_KEY;
+if (!isValidSubnet(SUBNET)) {
+  console.error(
+    `Invalid HOMESCAN_SUBNET: ${JSON.stringify(SUBNET)}. Expected format: "A.B.C" (e.g. "192.168.1")`
+  );
+  process.exit(1);
+}
 
 // Store last scan results for comparison
 let lastScanResults: NetworkDevice[] = [];
@@ -127,7 +146,7 @@ const TOOLS: Tool[] = [
   {
     name: "homescan_flagged",
     description:
-      "List devices flagged for security review (unknown manufacturers, Chinese IoT devices, randomized MACs)",
+      "List devices flagged for security review based on observable properties: unknown manufacturers and IoT/Smart Home class devices (which commonly phone home, have weaker update cadence, and appear in botnet exploitation datasets — applies equally across vendors).",
     inputSchema: {
       type: "object" as const,
       properties: {},
@@ -140,7 +159,7 @@ const TOOLS: Tool[] = [
 const server = new Server(
   {
     name: "mcp-homescan",
-    version: "0.1.0",
+    version: PKG.version,
   },
   {
     capabilities: {
@@ -198,7 +217,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "homescan_device": {
-        const ip = (args as { ip: string }).ip;
+        const ip = (args as { ip: string })?.ip;
+        if (typeof ip !== "string" || !isValidIPv4(ip)) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Invalid IP address: ${JSON.stringify(ip)}. Expected IPv4 format (e.g. "192.168.1.42").`,
+              },
+            ],
+            isError: true,
+          };
+        }
         const device = await getDeviceDetails(ip);
 
         if (!device) {
@@ -230,7 +260,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "homescan_mac_lookup": {
-        const mac = (args as { mac: string }).mac.toLowerCase();
+        const rawMac = (args as { mac?: string })?.mac;
+        if (typeof rawMac !== "string") {
+          return {
+            content: [{ type: "text", text: `Invalid MAC: expected string.` }],
+            isError: true,
+          };
+        }
+        const mac = normaliseMac(rawMac);
         const vendor = lookupMacVendor(mac);
         const isPrivate = isPrivateMac(mac);
 
@@ -355,35 +392,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "homescan_flagged": {
         const devices = await discoverDevices();
 
-        const flagged = devices.filter(
-          (d) =>
-            d.manufacturer?.includes("Xiaomi") ||
-            d.manufacturer?.includes("China") ||
-            d.manufacturer === "Unknown" ||
-            d.manufacturer === "Private/Randomized MAC"
-        );
-
-        const categorized = flagged.map((d) => {
-          let reason = "Unknown manufacturer";
-          let risk = "MEDIUM";
-
-          if (d.manufacturer?.includes("Xiaomi")) {
-            reason = "Xiaomi device - may send data to Chinese servers";
-            risk = "MEDIUM";
-          } else if (d.manufacturer?.includes("China")) {
-            reason = "Chinese manufacturer - verify device purpose";
-            risk = "HIGH";
-          } else if (d.manufacturer === "Private/Randomized MAC") {
-            reason = "Randomized MAC - device identity obscured";
-            risk = "LOW";
-          }
-
-          return {
-            ...d,
-            flag_reason: reason,
-            risk_level: risk,
-          };
-        });
+        const assessed = devices
+          .map((d) => ({ device: d, assessment: assessDevice(d) }))
+          .filter((x) => x.assessment.flagged)
+          .map((x) => ({
+            ...x.device,
+            is_private_mac: isPrivateMac(x.device.mac),
+            risk_level: x.assessment.risk,
+            flag_reasons: x.assessment.reasons,
+          }));
 
         return {
           content: [
@@ -391,14 +408,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               type: "text",
               text: JSON.stringify(
                 {
-                  flagged_count: categorized.length,
+                  flagged_count: assessed.length,
                   total_devices: devices.length,
-                  devices: categorized,
+                  methodology:
+                    "Flagging is based on observable properties (unknown vendor, IoT device class), not vendor nationality. IoT devices from any vendor receive the same review treatment.",
+                  devices: assessed,
                   recommendations: [
                     "Review each flagged device to confirm its purpose",
-                    "Check Pi-hole logs for suspicious DNS queries",
-                    "Consider isolating IoT devices on a separate VLAN",
+                    "Check DNS query logs (e.g. Pi-hole) for unexpected destinations",
+                    "Isolate IoT devices on a separate VLAN",
                     "Block unnecessary outbound connections at the firewall",
+                    "Keep firmware current; subscribe to vendor CVE feeds",
                   ],
                 },
                 null,
